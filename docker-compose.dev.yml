@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # Music Assistant Server
+  server:
+    build:
+      context: ..
+      dockerfile: ma-server/Dockerfile.dev
+    container_name: music-assistant-server-dev
+    ports:
+      - "8095:8095"
+    volumes:
+      # Mount source code for live development
+      - ./music_assistant:/app/music_assistant:ro
+      - ./requirements_all.txt:/app/requirements_all.txt:ro
+      # Persistent data directory
+      - ma-data:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=debug
+    networks:
+      - ma-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8095/ws || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Music Assistant Frontend (Development Server)
+  frontend:
+    image: node:20-alpine
+    container_name: music-assistant-frontend-dev
+    working_dir: /app
+    ports:
+      - "5173:5173"  # Vite dev server default port
+    volumes:
+      # Mount frontend source code
+      - ../ma-frontend:/app
+      # Use named volume for node_modules to avoid permission issues
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - NODE_ENV=development
+      # Frontend connects to server via Docker network
+      - VITE_SERVER_URL=http://server:8095
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    networks:
+      - ma-network
+    depends_on:
+      - server
+
+volumes:
+  ma-data:
+    name: music-assistant-data-dev
+  frontend-node-modules:
+    name: music-assistant-frontend-node-modules
+
+networks:
+  ma-network:
+    name: music-assistant-network
+    driver: bridge

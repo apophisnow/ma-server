@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../ma-frontend"
+		},
+		{
+			"path": "../models"
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,30 @@
+version: '3.8'
+
+# Simple Docker Compose for local development
+# This assumes you're running the server locally (not in Docker)
+# and only containerizes the frontend for convenience
+
+services:
+  # Music Assistant Frontend (Development Server)
+  frontend:
+    image: node:20-alpine
+    container_name: music-assistant-frontend-dev
+    working_dir: /app
+    ports:
+      - "5173:5173"  # Vite dev server
+    volumes:
+      # Mount frontend source code
+      - ../ma-frontend:/app
+      # Use named volume for node_modules
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - NODE_ENV=development
+      # Point to server running on host machine
+      - VITE_API_URL=http://host.docker.internal:8095
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  frontend-node-modules:
+    name: music-assistant-frontend-node-modules

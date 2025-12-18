@@ -183,6 +183,8 @@ class MusicAssistant:
         # not yet available while we're starting (or performing migrations)
         self._register_api_commands()
         await self.webserver.setup(await self.config.get_core_config("webserver"))
+        # Register RBAC commands after webserver setup (when RBAC manager exists)
+        self._register_rbac_commands()
         # setup discovery
         await self._setup_discovery()
         # load providers
@@ -725,6 +727,23 @@ class MusicAssistant:
                     authenticated = getattr(obj, "api_authenticated", True)
                     required_role = getattr(obj, "api_required_role", None)
                     self.register_api_command(obj.api_cmd, obj, authenticated, required_role)
+
+    def _register_rbac_commands(self) -> None:
+        """Register RBAC commands after webserver initialization."""
+        if not hasattr(self.webserver, "auth") or not hasattr(self.webserver.auth, "rbac"):
+            return
+
+        for attr_name in dir(self.webserver.auth.rbac):
+            if attr_name.startswith("__"):
+                continue
+            try:
+                obj = getattr(self.webserver.auth.rbac, attr_name)
+            except (AttributeError, RuntimeError):
+                continue
+            if hasattr(obj, "api_cmd"):
+                authenticated = getattr(obj, "api_authenticated", True)
+                required_role = getattr(obj, "api_required_role", None)
+                self.register_api_command(obj.api_cmd, obj, authenticated, required_role)
 
     async def _load_providers(self) -> None:
         """Load providers from config."""

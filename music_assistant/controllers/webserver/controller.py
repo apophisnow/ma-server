@@ -252,6 +252,7 @@ class WebserverController(CoreController):
         routes.append(("GET", "/auth/authorize", self._handle_auth_authorize))
         routes.append(("GET", "/auth/callback", self._handle_auth_callback))
         # add first-time setup routes
+        routes.append(("OPTIONS", "/setup", self._handle_cors_preflight))
         routes.append(("GET", "/setup", self._handle_setup_page))
         routes.append(("POST", "/setup", self._handle_setup))
         await self.auth.setup()
@@ -974,13 +975,21 @@ class WebserverController(CoreController):
 
     async def _handle_setup(self, request: web.Request) -> web.Response:
         """Handle first-time setup request to create admin user (non-ingress only)."""
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        }
+
         if self.auth.has_users:
             return web.json_response(
-                {"success": False, "error": "Setup already completed"}, status=400
+                {"success": False, "error": "Setup already completed"},
+                status=400,
+                headers=cors_headers,
             )
 
         if not request.can_read_body:
-            return web.Response(status=400, text="Body required")
+            return web.Response(status=400, text="Body required", headers=cors_headers)
 
         body = await request.json()
         username = body.get("username", "").strip()
@@ -989,12 +998,16 @@ class WebserverController(CoreController):
         # Validation
         if not username or len(username) < 2:
             return web.json_response(
-                {"success": False, "error": "Username must be at least 2 characters"}, status=400
+                {"success": False, "error": "Username must be at least 2 characters"},
+                status=400,
+                headers=cors_headers,
             )
 
         if not password or len(password) < 8:
             return web.json_response(
-                {"success": False, "error": "Password must be at least 8 characters"}, status=400
+                {"success": False, "error": "Password must be at least 8 characters"},
+                status=400,
+                headers=cors_headers,
             )
 
         try:
@@ -1030,13 +1043,24 @@ class WebserverController(CoreController):
                     "success": True,
                     "token": token,
                     "user": user.to_dict(),
-                }
+                },
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                },
             )
 
         except Exception as e:
             self.logger.exception("Error during setup")
             return web.json_response(
-                {"success": False, "error": f"Setup failed: {e!s}"}, status=500
+                {"success": False, "error": f"Setup failed: {e!s}"},
+                status=500,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                },
             )
 
     async def _announce_to_homeassistant(self) -> None:

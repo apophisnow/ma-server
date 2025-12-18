@@ -1,0 +1,23 @@
+{
+  "name": "Music Assistant Server",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspace/ma-server",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/ma-server,type=bind,consistency=cached",
+  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && ./scripts/setup.sh || true",
+  "remoteUser": "vscode",
+  "forwardPorts": [5000, 8080],
+  "extensions": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-azuretools.vscode-docker",
+    "esbenp.prettier-vscode"
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "/usr/local/bin/python",
+    "python.formatting.provider": "black",
+    "terminal.integrated.shell.linux": "/bin/bash"
+  }
+}

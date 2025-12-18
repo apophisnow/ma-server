@@ -50,6 +50,8 @@ from music_assistant.helpers.json import json_dumps, json_loads
 if TYPE_CHECKING:
     from music_assistant.controllers.webserver import WebserverController
 
+from music_assistant.controllers.webserver.rbac import RBACManager
+
 LOGGER = logging.getLogger(f"{MASS_LOGGER_NAME}.auth")
 
 # Database schema version
@@ -77,6 +79,7 @@ class AuthenticationManager:
         # Pending OAuth sessions for remote clients (session_id -> token)
         self._pending_oauth_sessions: dict[str, str | None] = {}
         self._has_users: bool = False
+        self.rbac: RBACManager = None  # type: ignore[assignment]
 
     async def setup(self) -> None:
         """Initialize the authentication manager."""
@@ -91,6 +94,10 @@ class AuthenticationManager:
 
         # Create database schema and handle migrations
         await self._setup_database()
+
+        # Setup RBAC
+        self.rbac = RBACManager(self)
+        await self.rbac.setup()
 
         # Setup login providers based on config
         await self._setup_login_providers(allow_self_registration)
@@ -535,6 +542,14 @@ class AuthenticationManager:
         if is_first_user and normalized_username != HOMEASSISTANT_SYSTEM_USER:
             self._has_users = True
             await self._migrate_playlog_to_first_user(user_id)
+
+        # Assign RBAC role based on legacy role
+        # Map legacy UserRole to RBAC role_id
+        rbac_role_id = "admin" if role == UserRole.ADMIN else "user"
+        try:
+            await self.rbac.assign_role_to_user(user_id, rbac_role_id)
+        except Exception as err:
+            self.logger.warning("Failed to assign RBAC role to new user: %s", err)
 
         return user
 
