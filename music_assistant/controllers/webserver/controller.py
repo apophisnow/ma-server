@@ -32,6 +32,7 @@ from music_assistant_models.enums import ConfigEntryType
 
 from music_assistant.constants import (
     CONF_AUTH_ALLOW_SELF_REGISTRATION,
+    CONF_AUTH_ENABLE_GUEST_ACCESS,
     CONF_BIND_IP,
     CONF_BIND_PORT,
     RESOURCES_DIR,
@@ -118,6 +119,15 @@ class WebserverController(CoreController):
                 description="Allow users to create accounts via Home Assistant OAuth. \n"
                 "New users will have USER role by default.",
                 hidden=not any(provider.domain == "hass" for provider in self.mass.providers),
+            ),
+            ConfigEntry(
+                key=CONF_AUTH_ENABLE_GUEST_ACCESS,
+                type=ConfigEntryType.BOOLEAN,
+                default_value=False,
+                label="Enable Guest Access",
+                description="Allow anonymous users to access Music Assistant with limited "
+                "read-only permissions. \n"
+                "Guest users can browse the library and view players but cannot control playback.",
             ),
             ConfigEntry(
                 key=CONF_BASE_URL,

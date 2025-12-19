@@ -39,12 +39,13 @@ def normalize_username(username: str) -> str:
 LOGGER = logging.getLogger(f"{MASS_LOGGER_NAME}.auth")
 
 
-async def get_ha_user_role(mass: MusicAssistant, ha_user_id: str) -> UserRole:
+async def get_ha_user_role(mass: MusicAssistant, ha_user_id: str) -> str:
     """
     Get user role based on Home Assistant admin status.
 
     :param mass: MusicAssistant instance.
     :param ha_user_id: The Home Assistant user ID to check.
+    :return: RBAC role_id ("admin" or "user").
     """
     try:
         hass_prov = mass.get_provider("hass")
@@ -59,13 +60,13 @@ async def get_ha_user_role(mass: MusicAssistant, ha_user_id: str) -> UserRole:
                 # User is admin if they have "system-admin" in their group_ids
                 group_ids = ha_user.get("group_ids", [])
                 if "system-admin" in group_ids:
-                    LOGGER.debug("HA user %s is admin, granting ADMIN role", ha_user_id)
-                    return UserRole.ADMIN
+                    LOGGER.debug("HA user %s is admin, granting admin role", ha_user_id)
+                    return "admin"
                 break
     except Exception as err:
         LOGGER.error("Failed to check HA admin status: %s", err)
 
-    return UserRole.USER
+    return "user"
 
 
 class LoginRateLimiter:
@@ -371,7 +372,7 @@ class BuiltinLoginProvider(LoginProvider):
         self,
         username: str,
         password: str,
-        role: UserRole = UserRole.USER,
+        role: str | UserRole = "user",
         display_name: str | None = None,
         player_filter: list[str] | None = None,
         provider_filter: list[str] | None = None,
@@ -381,7 +382,7 @@ class BuiltinLoginProvider(LoginProvider):
 
         :param username: The username.
         :param password: The password (will be hashed).
-        :param role: The user role (default: USER).
+        :param role: RBAC role_id (default: "user").
         :param display_name: Optional display name.
         :param player_filter: Optional list of player IDs user has access to.
         :param provider_filter: Optional list of provider instance IDs user has access to.
@@ -659,7 +660,7 @@ class HomeAssistantOAuthProvider(LoginProvider):
             existing_user = User(
                 user_id=user_dict["user_id"],
                 username=user_dict["username"],
-                role=UserRole(user_dict["role"]),
+                role=user_dict["role"],
                 enabled=bool(user_dict["enabled"]),
                 created_at=datetime.fromisoformat(user_dict["created_at"]),
                 display_name=user_dict["display_name"],
@@ -762,3 +763,32 @@ class HomeAssistantOAuthProvider(LoginProvider):
         except Exception as e:
             self.logger.exception("Error during Home Assistant OAuth callback")
             return AuthResult(success=False, error=str(e))
+
+
+class GuestLoginProvider(LoginProvider):
+    """Guest login provider for anonymous access."""
+
+    @property
+    def provider_type(self) -> AuthProviderType:
+        """Return the provider type."""
+        return AuthProviderType.BUILTIN  # Use builtin type for guest
+
+    @property
+    def requires_redirect(self) -> bool:
+        """Return False - guest provider doesn't need redirect."""
+        return False
+
+    async def authenticate(self, credentials: dict[str, Any]) -> AuthResult:
+        """
+        Authenticate as guest (no credentials required).
+
+        :param credentials: Not used for guest authentication.
+        """
+        # Check if guest access is enabled
+        if not await self.auth_manager.is_guest_access_enabled():
+            return AuthResult(success=False, error="Guest access is disabled")
+
+        # Get or create the guest user
+        guest_user = await self.auth_manager.get_guest_system_user()
+
+        return AuthResult(success=True, user=guest_user)

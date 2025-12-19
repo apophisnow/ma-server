@@ -23,6 +23,9 @@ MASS_LOGGER_NAME: Final[str] = "music_assistant"
 # Home Assistant system user
 HOMEASSISTANT_SYSTEM_USER: Final[str] = "homeassistant_system"
 
+# Guest system user
+GUEST_SYSTEM_USER: Final[str] = "guest_system"
+
 UNKNOWN_ARTIST: Final[str] = "[unknown]"
 UNKNOWN_ARTIST_ID_MBID: Final[str] = "125ec42a-7229-4250-afc5-e057484327fe"
 VARIOUS_ARTISTS_NAME: Final[str] = "Various Artists"
@@ -101,6 +104,7 @@ CONF_USE_SSL: Final[str] = "use_ssl"
 CONF_VERIFY_SSL: Final[str] = "verify_ssl"
 CONF_SSL_FINGERPRINT: Final[str] = "ssl_fingerprint"
 CONF_AUTH_ALLOW_SELF_REGISTRATION: Final[str] = "auth_allow_self_registration"
+CONF_AUTH_ENABLE_GUEST_ACCESS: Final[str] = "auth_enable_guest_access"
 CONF_ENABLED: Final[str] = "enabled"
 
 # config default values

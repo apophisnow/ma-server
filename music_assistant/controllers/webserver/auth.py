@@ -25,7 +25,9 @@ from music_assistant_models.errors import (
 
 from music_assistant.constants import (
     CONF_AUTH_ALLOW_SELF_REGISTRATION,
+    CONF_AUTH_ENABLE_GUEST_ACCESS,
     DB_TABLE_PLAYLOG,
+    GUEST_SYSTEM_USER,
     HOMEASSISTANT_SYSTEM_USER,
     MASS_LOGGER_NAME,
 )
@@ -36,6 +38,7 @@ from music_assistant.controllers.webserver.helpers.auth_middleware import (
 from music_assistant.controllers.webserver.helpers.auth_providers import (
     AuthResult,
     BuiltinLoginProvider,
+    GuestLoginProvider,
     HomeAssistantOAuthProvider,
     HomeAssistantProviderConfig,
     LoginProvider,
@@ -276,6 +279,10 @@ class AuthenticationManager:
         builtin_config: LoginProviderConfig = {"allow_self_registration": False}
         self.login_providers["builtin"] = BuiltinLoginProvider(self.mass, "builtin", builtin_config)
 
+        # Guest login provider (always registered, but only works if enabled in config)
+        guest_config: LoginProviderConfig = {"allow_self_registration": False}
+        self.login_providers["guest"] = GuestLoginProvider(self.mass, "guest", guest_config)
+
         # Home Assistant OAuth provider
         # Automatically enabled if HA provider (plugin) is configured
         ha_provider = None
@@ -429,7 +436,7 @@ class AuthenticationManager:
         return User(
             user_id=user_row["user_id"],
             username=user_row["username"],
-            role=UserRole(user_row["role"]),
+            role=user_row["role"],
             enabled=bool(user_row["enabled"]),
             created_at=datetime.fromisoformat(user_row["created_at"]),
             display_name=user_row["display_name"],
@@ -478,7 +485,7 @@ class AuthenticationManager:
     async def create_user(
         self,
         username: str,
-        role: UserRole = UserRole.USER,
+        role: str | UserRole = "user",
         display_name: str | None = None,
         avatar_url: str | None = None,
         preferences: dict[str, Any] | None = None,
@@ -489,7 +496,7 @@ class AuthenticationManager:
         Create a new user.
 
         :param username: The username.
-        :param role: The user role (default: USER).
+        :param role: RBAC role_id (default: "user").
         :param display_name: Optional display name.
         :param avatar_url: Optional avatar URL.
         :param preferences: Optional user preferences dict.
@@ -497,6 +504,9 @@ class AuthenticationManager:
         :param provider_filter: Optional list of provider instance IDs user has access to.
         """
         normalized_username = normalize_username(username)
+
+        # Convert UserRole enum to string if needed
+        role_str = role.value if isinstance(role, UserRole) else role
 
         # Check if this is the first non-system user
         is_first_user = not await self._has_non_system_users()
@@ -513,7 +523,7 @@ class AuthenticationManager:
         user_data = {
             "user_id": user_id,
             "username": normalized_username,
-            "role": role.value,
+            "role": role_str,
             "enabled": True,
             "created_at": created_at.isoformat(),
             "display_name": display_name,
@@ -528,7 +538,7 @@ class AuthenticationManager:
         user = User(
             user_id=user_id,
             username=normalized_username,
-            role=role,
+            role=role_str,
             enabled=True,
             created_at=created_at,
             display_name=display_name,
@@ -543,11 +553,9 @@ class AuthenticationManager:
             self._has_users = True
             await self._migrate_playlog_to_first_user(user_id)
 
-        # Assign RBAC role based on legacy role
-        # Map legacy UserRole to RBAC role_id
-        rbac_role_id = "admin" if role == UserRole.ADMIN else "user"
+        # Assign RBAC role
         try:
-            await self.rbac.assign_role_to_user(user_id, rbac_role_id)
+            await self.rbac.assign_role_to_user(user_id, role_str)
         except Exception as err:
             self.logger.warning("Failed to assign RBAC role to new user: %s", err)
 
@@ -556,7 +564,11 @@ class AuthenticationManager:
     async def _has_non_system_users(self) -> bool:
         """Check if any non-system users exist."""
         user_rows = await self.database.get_rows("users", limit=10)
-        return any(row["username"] != HOMEASSISTANT_SYSTEM_USER for row in user_rows)
+        system_users = {
+            normalize_username(HOMEASSISTANT_SYSTEM_USER),
+            normalize_username(GUEST_SYSTEM_USER),
+        }
+        return any(normalize_username(row["username"]) not in system_users for row in user_rows)
 
     async def _migrate_playlog_to_first_user(self, user_id: str) -> None:
         """
@@ -608,7 +620,8 @@ class AuthenticationManager:
             role=role,
             display_name=display_name,
         )
-        self.logger.debug("Created Home Assistant system user: %s (role: %s)", username, role.value)
+        role_str = role.value if isinstance(role, UserRole) else role
+        self.logger.debug("Created Home Assistant system user: %s (role: %s)", username, role_str)
         return user
 
     async def get_homeassistant_system_user_token(self) -> str:
@@ -641,6 +654,46 @@ class AuthenticationManager:
             name=token_name,
             is_long_lived=False,
         )
+
+    async def get_guest_system_user(self) -> User:
+        """
+        Get or create the guest system user.
+
+        This is a special system user that allows anonymous/passwordless access
+        when guest access is enabled by the admin.
+
+        :return: The guest system user.
+        """
+        username = GUEST_SYSTEM_USER
+        display_name = "Guest"
+        role = "guest"  # Use the guest role
+
+        normalized_username = normalize_username(username)
+
+        # Try to find existing user by username
+        user_row = await self.database.get_row("users", {"username": normalized_username})
+        if user_row:
+            # Use get_user to ensure preferences are parsed correctly
+            user = await self.get_user(user_row["user_id"])
+            assert user is not None  # User exists in DB, so get_user must return it
+            return user
+
+        # Create new guest system user
+        user = await self.create_user(
+            username=username,
+            role=role,
+            display_name=display_name,
+        )
+        self.logger.debug("Created guest system user: %s (role: %s)", username, role)
+        return user
+
+    async def is_guest_access_enabled(self) -> bool:
+        """
+        Check if guest access is enabled.
+
+        :return: True if guest access is enabled.
+        """
+        return bool(self.webserver.config.get_value(CONF_AUTH_ENABLE_GUEST_ACCESS, False))
 
     async def link_user_to_provider(
         self,
@@ -843,7 +896,7 @@ class AuthenticationManager:
             raise InvalidDataError("Token not found")
 
         # Check permissions - users can only revoke their own tokens unless admin
-        if token_row["user_id"] != user.user_id and user.role != UserRole.ADMIN:
+        if token_row["user_id"] != user.user_id and user.role != "admin":
             raise InsufficientPermissions("You can only revoke your own tokens")
 
         await self.database.delete("auth_tokens", {"token_id": token_id})
@@ -865,7 +918,7 @@ class AuthenticationManager:
 
         # If user_id is provided and different from current user, require admin
         if user_id and user_id != current_user.user_id:
-            if current_user.role != UserRole.ADMIN:
+            if current_user.role != "admin":
                 return []
             target_user = await self.get_user(user_id)
             if not target_user:
@@ -888,16 +941,20 @@ class AuthenticationManager:
         :return: List of user objects.
         """
         user_rows = await self.database.get_rows("users", limit=1000)
+        system_users = {
+            normalize_username(HOMEASSISTANT_SYSTEM_USER),
+            normalize_username(GUEST_SYSTEM_USER),
+        }
         users = []
         for row in user_rows:
             # Skip system users
-            if row["username"] == HOMEASSISTANT_SYSTEM_USER:
+            if normalize_username(row["username"]) in system_users:
                 continue
             users.append(
                 User(
                     user_id=row["user_id"],
                     username=row["username"],
-                    role=UserRole(row["role"]),
+                    role=row["role"],
                     enabled=bool(row["enabled"]),
                     created_at=datetime.fromisoformat(row["created_at"]),
                     display_name=row["display_name"],
@@ -909,7 +966,7 @@ class AuthenticationManager:
             )
         return users
 
-    async def update_user_role(self, user_id: str, new_role: UserRole, admin_user: User) -> bool:
+    async def update_user_role(self, user_id: str, new_role: str | UserRole, admin_user: User) -> bool:
         """
         Update a user's role (admin only).
 
@@ -917,17 +974,21 @@ class AuthenticationManager:
         :param new_role: The new role to assign.
         :param admin_user: The admin user performing the action.
         """
-        if admin_user.role != UserRole.ADMIN:
+        # Check if admin has permission
+        if admin_user.role != "admin" and admin_user.role != UserRole.ADMIN:
             return False
 
         user_row = await self.database.get_row("users", {"user_id": user_id})
         if not user_row:
             return False
 
+        # Convert UserRole enum to string if needed
+        role_str = new_role.value if isinstance(new_role, UserRole) else new_role
+
         await self.database.update(
             "users",
             {"user_id": user_id},
-            {"role": new_role.value},
+            {"role": role_str},
         )
         return True
 
@@ -975,6 +1036,10 @@ class AuthenticationManager:
 
         providers = []
         for provider_id, provider in self.login_providers.items():
+            # For guest provider, only include if enabled
+            if provider_id == "guest" and not await self.is_guest_access_enabled():
+                continue
+
             providers.append(
                 {
                     "provider_id": provider_id,
@@ -1042,7 +1107,7 @@ class AuthenticationManager:
                 "user_id": auth_result.user.user_id,
                 "username": auth_result.user.username,
                 "display_name": auth_result.user.display_name,
-                "role": auth_result.user.role.value,
+                "role": auth_result.user.role,
             },
         }
 
@@ -1175,7 +1240,7 @@ class AuthenticationManager:
 
         # If user_id is provided and different from current user, require admin
         if user_id and user_id != current_user.user_id:
-            if current_user.role != UserRole.ADMIN:
+            if current_user.role != "admin":
                 raise InsufficientPermissions(
                     "Admin access required to create tokens for other users"
                 )
@@ -1220,22 +1285,21 @@ class AuthenticationManager:
         if not password or len(password) < 8:
             raise InvalidDataError("Password must be at least 8 characters")
 
-        # Validate role
-        try:
-            user_role = UserRole(role)
-        except ValueError as err:
-            raise InvalidDataError("Invalid role. Must be 'admin' or 'user'") from err
+        # Validate role exists in RBAC system
+        if role not in self.rbac._roles_cache:
+            available_roles = ", ".join(self.rbac._roles_cache.keys())
+            raise InvalidDataError(f"Invalid role '{role}'. Available roles: {available_roles}")
 
         # Get built-in provider
         builtin_provider = self.login_providers.get("builtin")
         if not builtin_provider or not isinstance(builtin_provider, BuiltinLoginProvider):
             raise InvalidDataError("Built-in auth provider not available")
 
-        # Create user with password
+        # Create user with password (role is stored directly as RBAC role_id)
         user = await builtin_provider.create_user_with_password(
             username,
             password,
-            role=user_role,
+            role=role,
             player_filter=player_filter,
             provider_filter=provider_filter,
         )
@@ -1381,14 +1445,26 @@ class AuthenticationManager:
             if not is_admin:
                 raise InsufficientPermissions("Only admins can update user roles")
 
-            try:
-                new_role = UserRole(role)
-            except ValueError as err:
-                raise InvalidDataError("Invalid role. Must be 'admin' or 'user'") from err
+            # Validate role exists in RBAC system
+            if role not in self.rbac._roles_cache:
+                available_roles = ", ".join(self.rbac._roles_cache.keys())
+                raise InvalidDataError(f"Invalid role '{role}'. Available roles: {available_roles}")
 
-            success = await self.update_user_role(target_user.user_id, new_role, current_user_obj)
+            # Update role field in database
+            success = await self.update_user_role(target_user.user_id, role, current_user_obj)
             if not success:
                 raise InvalidDataError("Failed to update role")
+
+            # Update RBAC role assignment
+            try:
+                # Clear existing roles and assign new one
+                existing_roles = await self.rbac.get_user_roles(target_user)
+                for existing_role in existing_roles:
+                    await self.rbac.revoke_role_from_user(target_user.user_id, existing_role.role_id)
+                await self.rbac.assign_role_to_user(target_user.user_id, role)
+                self.logger.info("Updated RBAC role for user '%s' to '%s'", target_user.username, role)
+            except Exception as err:
+                self.logger.error("Failed to update RBAC role for user '%s': %s", target_user.username, err)
 
             # Refresh target user to get updated role
             refreshed_user = await self.get_user(target_user.user_id)

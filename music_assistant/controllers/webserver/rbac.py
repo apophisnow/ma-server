@@ -66,21 +66,6 @@ except ImportError:
             ],
             created_at=None,
         ),
-        "dj": Role(
-            role_id="dj",
-            name="DJ",
-            description="Playback control and queue management without library modifications",
-            is_system=True,
-            permissions=[
-                PermissionScope.PLAYER_CONTROL,
-                PermissionScope.PLAYER_VOLUME,
-                PermissionScope.PLAYER_QUEUE,
-                PermissionScope.PLAYER_VIEW,
-                PermissionScope.LIBRARY_READ,
-                PermissionScope.PLAYLIST_READ,
-            ],
-            created_at=None,
-        ),
     }
 
 if TYPE_CHECKING:
@@ -191,12 +176,23 @@ class RBACManager:
         if not role.created_at:
             role.created_at = utc()
 
+        # Convert permissions to strings, handling both enums and strings
+        permission_strs = []
+        for p in role.permissions:
+            if isinstance(p, str):
+                permission_strs.append(p)
+            elif isinstance(p, PermissionScope):
+                permission_strs.append(p.value)
+            else:
+                # Handle any other type by converting to PermissionScope first
+                permission_strs.append(PermissionScope(p).value)
+
         data = {
             "role_id": role.role_id,
             "name": role.name,
             "description": role.description,
             "is_system": 1 if role.is_system else 0,
-            "permissions": json_dumps([p.value for p in role.permissions]),
+            "permissions": json_dumps(permission_strs),
             "created_at": role.created_at.isoformat(),
         }
 
