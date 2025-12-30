@@ -92,14 +92,9 @@ class WebsocketClientHandler:
         server_info = self.mass.get_server_info()
         await self._send_message(server_info)
 
-        # Block until onboarding is complete
-        if not self.webserver.auth.has_users and not self._is_ingress:
-            await self._send_message(ErrorResultMessage("connection", 503, "Setup required"))
-            await wsock.close()
-            return wsock
-
         # For Ingress connections, auto-create/link user and subscribe to events immediately
         # For regular connections, events will be subscribed after successful authentication
+        # Note: If onboarding is not complete, frontend detects from server_info.onboard_done
         if self._is_ingress:
             await self._handle_ingress_auth()
             self._subscribe_to_events()
@@ -310,8 +305,10 @@ class WebsocketClientHandler:
             return
 
         # Authenticate with token
+        self._logger.debug("Attempting token authentication (token length: %d)", len(token))
         user = await self.webserver.auth.authenticate_with_token(token)
         if not user:
+            self._logger.warning("Token authentication failed for token: %s...", token[:16])
             await self._send_message(
                 ErrorResultMessage(
                     msg.message_id,
