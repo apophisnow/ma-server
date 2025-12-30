@@ -356,10 +356,14 @@ class AuthenticationManager:
         """
         # Hash the token to look it up
         token_hash = hashlib.sha256(token.encode()).hexdigest()
+        self.logger.debug("Looking up token with hash: %s...", token_hash[:16])
 
         # Find token in database
         token_row = await self.database.get_row("auth_tokens", {"token_hash": token_hash})
         if not token_row:
+            self.logger.warning(
+                "Token authentication failed: token not found (hash: %s...)", token_hash[:16]
+            )
             return None
 
         # Check if token is expired

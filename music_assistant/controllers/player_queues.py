@@ -35,6 +35,7 @@ from music_assistant_models.enums import (
 )
 from music_assistant_models.errors import (
     AudioError,
+    InsufficientPermissions,
     InvalidCommand,
     InvalidDataError,
     MediaNotFoundError,
@@ -308,6 +309,12 @@ class PlayerQueuesController(CoreController):
     @api_command("player_queues/shuffle")
     async def set_shuffle(self, queue_id: str, shuffle_enabled: bool) -> None:
         """Configure shuffle setting on the the queue."""
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("You do not have permission to change shuffle mode")
         queue = self._queues[queue_id]
         if queue.shuffle_enabled == shuffle_enabled:
             return  # no change
@@ -359,6 +366,12 @@ class PlayerQueuesController(CoreController):
     @api_command("player_queues/repeat")
     def set_repeat(self, queue_id: str, repeat_mode: RepeatMode) -> None:
         """Configure repeat setting on the the queue."""
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("You do not have permission to change repeat mode")
         queue = self._queues[queue_id]
         if queue.repeat_mode == repeat_mode:
             return  # no change
@@ -392,6 +405,16 @@ class PlayerQueuesController(CoreController):
         # this makes sure that playback has priority over other requests that may be
         # happening in the background
         BYPASS_THROTTLER.set(True)
+        # Prevent guest from overriding playing media unless they have playback control permission
+        current_user = get_current_user()
+        if (
+            current_user
+            and not self.mass.webserver.guest_access.check_user_permission(
+                current_user.user_id, "can_control_playback"
+            )
+            and option in (QueueOption.PLAY, QueueOption.REPLACE)
+        ):
+            raise InsufficientPermissions("You do not have permission to override playing media")
         if not (queue := self.get(queue_id)):
             raise PlayerUnavailableError(f"Queue {queue_id} is not available")
         # always fetch the underlying player so we can raise early if its not available
@@ -632,6 +655,12 @@ class PlayerQueuesController(CoreController):
     @api_command("player_queues/clear")
     def clear(self, queue_id: str, skip_stop: bool = False) -> None:
         """Clear all items in the queue."""
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to clear the queue")
         queue = self._queues[queue_id]
         queue.radio_source = []
         if queue.state != PlaybackState.IDLE and not skip_stop:
@@ -649,6 +678,12 @@ class PlayerQueuesController(CoreController):
 
         - queue_id: queue_id of the playerqueue to handle the command.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to stop media")
         queue_player = self.mass.players.get(queue_id, True)
         if queue_player is None:
             raise PlayerUnavailableError(f"Player {queue_id} is not available")
@@ -669,11 +704,20 @@ class PlayerQueuesController(CoreController):
         queue_player = self.mass.players.get(queue_id, True)
         if queue_player is None:
             raise PlayerUnavailableError(f"Player {queue_id} is not available")
-        if (
-            (queue := self._queues.get(queue_id))
-            and queue.active
-            and queue.state == PlaybackState.PAUSED
-        ):
+        queue = self._queues.get(queue_id)
+        # Check gßuest access permissions
+        # current_user = get_current_user()
+        # if (
+        #     current_user
+        #     and not self.mass.webserver.guest_access.check_user_permission(
+        #         current_user.user_id, "can_control_playback"
+        #     )
+        #     # and queue.state != PlaybackState.PLAYING
+        # ):
+        #     raise InsufficientPermissions(
+        #         "Guest users do not have permission override playing media"
+        #     )
+        if queue and queue.active and queue.state == PlaybackState.PAUSED:
             # forward the actual play/unpause command to the player
             await queue_player.play()
             return
@@ -686,6 +730,12 @@ class PlayerQueuesController(CoreController):
 
         - queue_id: queue_id of the playerqueue to handle the command.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to pause media")
         if queue := self._queues.get(queue_id):
             if queue.state == PlaybackState.PLAYING:
                 queue.resume_pos = int(queue.corrected_elapsed_time)
@@ -728,6 +778,12 @@ class PlayerQueuesController(CoreController):
 
         - queue_id: queue_id of the queue to handle the command.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to control playback")
         if (queue := self._queues.get(queue_id)) and queue.state == PlaybackState.PLAYING:
             await self.pause(queue_id)
             return
@@ -739,6 +795,12 @@ class PlayerQueuesController(CoreController):
 
         - queue_id: queue_id of the queue to handle the command.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to control playback")
         if (queue := self.get(queue_id)) is None or not queue.active:
             # TODO: forward to underlying player if not active
             return
@@ -766,6 +828,12 @@ class PlayerQueuesController(CoreController):
 
         - queue_id: queue_id of the queue to handle the command.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to control playback")
         if (queue := self.get(queue_id)) is None or not queue.active:
             # TODO: forward to underlying player if not active
             return
@@ -781,6 +849,12 @@ class PlayerQueuesController(CoreController):
         - queue_id: queue_id of the queue to handle the command.
         - seconds: number of seconds to skip in track. Use negative value to skip back.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to control playback")
         if (queue := self.get(queue_id)) is None or not queue.active:
             # TODO: forward to underlying player if not active
             return
@@ -793,6 +867,12 @@ class PlayerQueuesController(CoreController):
         - queue_id: queue_id of the queue to handle the command.
         - position: position in seconds to seek to in the current playing item.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_playback"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to control playback")
         if not (queue := self.get(queue_id)):
             return
         queue_player = self.mass.players.get(queue_id, True)
@@ -815,6 +895,12 @@ class PlayerQueuesController(CoreController):
 
         - queue_id: queue_id of the queue to handle the command.
         """
+        # Check guest access permissions
+        # current_user = get_current_user()
+        # if current_user and not self.mass.webserver.guest_access.check_user_permission(
+        #     current_user.user_id, "can_control_playback"
+        # ):
+        #     raise InsufficientPermissions("Guest users do not have permission to resume playback")
         queue = self._queues[queue_id]
         queue_items = self._queue_items[queue_id]
         resume_item = queue.current_item

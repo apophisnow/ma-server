@@ -49,6 +49,7 @@ from music_assistant.models.core_controller import CoreController
 
 from .api_docs import generate_commands_json, generate_openapi_spec, generate_schemas_json
 from .auth import AuthenticationManager
+from .guest_access import GuestAccessManager
 from .helpers.auth_middleware import (
     get_authenticated_user,
     is_request_from_ingress,
@@ -94,6 +95,7 @@ class WebserverController(CoreController):
         self.manifest.icon = "web-box"
         self.auth = AuthenticationManager(self)
         self.remote_access = RemoteAccessManager(self)
+        self.guest_access = GuestAccessManager(self)
         self._sendspin_proxy = SendspinProxyHandler(self)
 
     @property
@@ -235,17 +237,31 @@ class WebserverController(CoreController):
         self.config = config
         # work out all routes
         routes: list[tuple[str, str, Callable[[web.Request], Awaitable[web.StreamResponse]]]] = []
-        # frontend routes
-        frontend_dir = locate_frontend()
-        for filename in next(os.walk(frontend_dir))[2]:
-            if filename.endswith(".py"):
-                continue
-            filepath = os.path.join(frontend_dir, filename)
-            handler = partial(self._server.serve_static, filepath)
-            routes.append(("GET", f"/{filename}", handler))
-        # add index (with onboarding check)
-        self._index_path = os.path.join(frontend_dir, "index.html")
-        routes.append(("GET", "/", self._handle_index))
+
+        # Check for development frontend URL (e.g., Vite dev server)
+        dev_frontend_url = os.getenv("FRONTEND_DEV_URL")
+        if dev_frontend_url:
+            self.logger.warning(
+                "🚀 Development mode: Proxying frontend requests to %s", dev_frontend_url
+            )
+            self._dev_frontend_url = dev_frontend_url.rstrip("/")
+            # In dev mode, proxy frontend requests to Vite dev server
+            # Note: The root path route is checked first, then specific routes,
+            # and finally the catch-all route for all other assets
+            routes.append(("GET", "/", self._handle_dev_frontend_proxy))
+            self._index_path = None  # Not used in dev mode
+        else:
+            # Production mode: serve from built frontend package
+            frontend_dir = locate_frontend()
+            for filename in next(os.walk(frontend_dir))[2]:
+                if filename.endswith(".py"):
+                    continue
+                filepath = os.path.join(frontend_dir, filename)
+                handler = partial(self._server.serve_static, filepath)
+                routes.append(("GET", f"/{filename}", handler))
+            # add index (with onboarding check)
+            self._index_path = os.path.join(frontend_dir, "index.html")
+            routes.append(("GET", "/", self._handle_index))
         # add logo
         logo_path = str(RESOURCES_DIR.joinpath("logo.png"))
         handler = partial(self._server.serve_static, logo_path)
@@ -292,6 +308,13 @@ class WebserverController(CoreController):
         routes.append(("POST", "/setup", self._handle_setup))
         # add sendspin proxy route (authenticated WebSocket proxy to internal sendspin server)
         routes.append(("GET", "/sendspin", self._sendspin_proxy.handle_sendspin_proxy))
+
+        # In development mode, add a catch-all route to proxy any unmatched requests to Vite
+        # This must be registered LAST so all specific API routes take precedence
+        # Uses aiohttp's path pattern syntax to match any path
+        if dev_frontend_url:
+            routes.append(("GET", "/{tail:.*}", self._handle_dev_frontend_proxy))
+
         await self.auth.setup()
         # start the webserver
         all_ip_addresses = await get_ip_addresses()
@@ -356,8 +379,12 @@ class WebserverController(CoreController):
             bind_port=self.publish_port,
             base_url=base_url,
             static_routes=routes,
-            # add assets subdir as static_content
-            static_content=("/assets", os.path.join(frontend_dir, "assets"), "assets"),
+            # add assets subdir as static_content (only in production mode)
+            static_content=(
+                ("/assets", os.path.join(frontend_dir, "assets"), "assets")
+                if not dev_frontend_url
+                else None
+            ),
             ingress_tcp_site_params=ingress_tcp_site_params,
             # Add mass object to app for use in auth middleware
             app_state={"mass": self.mass},
@@ -367,13 +394,15 @@ class WebserverController(CoreController):
             # (re)announce to HA supervisor to make sure that HA picks it up
             await self._announce_to_homeassistant()
 
-        # Setup remote access after webserver is running
+        # Setup remote access and guest access after webserver is running
         await self.remote_access.setup()
+        await self.guest_access.setup()
 
     async def close(self) -> None:
         """Cleanup on exit."""
         if self.remote_access.is_running:
             await self.remote_access.close()
+        await self.guest_access.close()
         for client in set(self.clients):
             await client.disconnect()
         await self._server.close()
@@ -595,6 +624,31 @@ class WebserverController(CoreController):
         html_content = html_content.replace("{{ERROR_MESSAGE}}", html.escape(error_message))
         return web.Response(text=html_content, content_type="text/html", status=status)
 
+    async def _handle_dev_frontend_proxy(self, request: web.Request) -> web.Response:
+        """Proxy requests to development frontend server (Vite)."""
+        # Proxy the request to the Vite dev server
+        target_url = f"{self._dev_frontend_url}{request.path_qs}"
+        self.logger.debug("Proxying frontend request to: %s", target_url)
+
+        try:
+            async with self.mass.http_session.get(
+                target_url, headers={"Host": request.host}, timeout=ClientTimeout(total=30)
+            ) as resp:
+                # Forward the response from Vite to the client
+                headers = {
+                    k: v
+                    for k, v in resp.headers.items()
+                    if k.lower() not in ("transfer-encoding", "content-encoding")
+                }
+                return web.Response(body=await resp.read(), status=resp.status, headers=headers)
+        except Exception as err:
+            self.logger.error("Failed to proxy frontend request to %s: %s", target_url, err)
+            error_msg = (
+                f"Dev frontend proxy error: {err}\n\n"
+                f"Make sure Vite dev server is running on {self._dev_frontend_url}"
+            )
+            return web.Response(status=502, text=error_msg)
+
     async def _handle_index(self, request: web.Request) -> web.StreamResponse:
         """Handle request for index page (Vue frontend)."""
         is_ingress_request = is_request_from_ingress(request)
@@ -618,7 +672,10 @@ class WebserverController(CoreController):
             return web.Response(status=302, headers={"Location": "setup"})
 
         # Serve the Vue frontend index.html
-        return await self._server.serve_static(self._index_path, request)
+        if self._index_path:
+            return await self._server.serve_static(self._index_path, request)
+        # Should never reach here in production mode
+        return web.Response(status=500, text="Frontend not configured")
 
     async def _handle_login_page(self, request: web.Request) -> web.Response:
         """Handle request for login page (external client OAuth callback scenario)."""

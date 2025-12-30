@@ -664,6 +664,12 @@ class PlayerController(CoreController):
         :param player_id: player_id of the player to handle the command.
         :param volume_level: volume level (0..100) to set on the player.
         """
+        # Check guest access permissions
+        current_user = get_current_user()
+        if current_user and not self.mass.webserver.guest_access.check_user_permission(
+            current_user.user_id, "can_control_volume"
+        ):
+            raise InsufficientPermissions("Guest users do not have permission to adjust volume")
         await self._handle_cmd_volume_set(player_id, volume_level)
 
     @api_command("players/cmd/volume_up")
