@@ -43,6 +43,9 @@ class RTCPSender:
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 
+        # Set socket to non-blocking mode to prevent event loop blocking
+        self.socket.setblocking(False)
+
         # Use same TTL and DSCP as RTP
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.rtp_sender.ttl)
 
@@ -53,7 +56,7 @@ class RTCPSender:
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         self.logger.info(
-            "Created RTCP socket for %s:%d",
+            "Created RTCP socket for %s:%d (non-blocking)",
             self.rtp_sender.multicast_group,
             rtcp_port,
         )
@@ -90,8 +93,14 @@ class RTCPSender:
 
         :return: RTCP SR packet bytes
         """
-        # Get current NTP timestamp
-        ntp_timestamp = self.rtp_sender.get_ntp_timestamp()
+        # Get atomic snapshot of RTP state
+        # This ensures NTP time and RTP timestamp are consistent (RFC 3550 requirement)
+        # The RTP timestamp must correspond to the sampling instant at the NTP time
+        ntp_timestamp, rtp_timestamp, packet_count, octet_count = (
+            self.rtp_sender.get_rtcp_snapshot()
+        )
+
+        # Split NTP timestamp into MSW and LSW
         ntp_msw = (ntp_timestamp >> 32) & 0xFFFFFFFF  # Most significant word
         ntp_lsw = ntp_timestamp & 0xFFFFFFFF  # Least significant word
 
@@ -109,16 +118,16 @@ class RTCPSender:
 
         # Pack the SR packet
         return struct.pack(
-            "!BBHIIIIIII",
+            "!BBHIIIIII",
             version_p_rc,  # V, P, RC
             packet_type,  # PT=200
             length,  # Length
             self.rtp_sender.ssrc,  # SSRC of sender
             ntp_msw,  # NTP timestamp MSW
             ntp_lsw,  # NTP timestamp LSW
-            self.rtp_sender.timestamp & 0xFFFFFFFF,  # RTP timestamp
-            self.rtp_sender.packet_count & 0xFFFFFFFF,  # Sender's packet count
-            self.rtp_sender.octet_count & 0xFFFFFFFF,  # Sender's octet count
+            rtp_timestamp & 0xFFFFFFFF,  # RTP timestamp (derived from NTP time)
+            packet_count & 0xFFFFFFFF,  # Sender's packet count (snapshot)
+            octet_count & 0xFFFFFFFF,  # Sender's octet count (snapshot)
         )
 
     def send_sender_report(self) -> None:
@@ -129,6 +138,9 @@ class RTCPSender:
         # RTCP port is always RTP port + 1
         rtcp_port = self.rtp_sender.rtp_port + 1
 
+        # Get snapshot for logging (matches what's in the SR)
+        _, rtp_ts, pkt_count, oct_count = self.rtp_sender.get_rtcp_snapshot()
+
         # Create and send SR packet
         try:
             self.socket.sendto(
@@ -136,9 +148,9 @@ class RTCPSender:
             )
             self.logger.debug(
                 "Sent RTCP SR: RTP_TS=%d, PKT_COUNT=%d, OCTET_COUNT=%d",
-                self.rtp_sender.timestamp,
-                self.rtp_sender.packet_count,
-                self.rtp_sender.octet_count,
+                rtp_ts,
+                pkt_count,
+                oct_count,
             )
         except OSError as err:
             self.logger.error("Failed to send RTCP SR: %s", err)

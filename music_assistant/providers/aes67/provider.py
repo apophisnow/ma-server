@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+import json
+from typing import TYPE_CHECKING, Any
 
 from music_assistant.models.player_provider import PlayerProvider
 
@@ -34,13 +35,29 @@ class AES67Provider(PlayerProvider):
         """Handle async initialization of the provider."""
         self.logger.info("Initializing AES67 Multicast Provider")
 
-        # Get configured multicast streams
-        multicast_streams = cast("list[Any]", self.config.get_value(CONF_MULTICAST_STREAMS, []))
+        # Get configured multicast streams (stored as JSON string)
+        multicast_streams_str = self.config.get_value(CONF_MULTICAST_STREAMS)
 
-        if not multicast_streams:
+        if not multicast_streams_str:
             self.logger.warning(
                 "No multicast streams configured. Please configure at least one stream."
             )
+            return
+
+        # Ensure it's a string
+        if not isinstance(multicast_streams_str, str):
+            self.logger.error("multicast_streams configuration must be a JSON string")
+            return
+
+        # Parse JSON configuration
+        try:
+            multicast_streams = json.loads(multicast_streams_str)
+        except json.JSONDecodeError as err:
+            self.logger.error("Invalid JSON in multicast streams configuration: %s", err)
+            return
+
+        if not isinstance(multicast_streams, list):
+            self.logger.error("multicast_streams must be a JSON array")
             return
 
         # Create virtual player for each configured stream

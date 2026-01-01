@@ -62,6 +62,11 @@ class RTPSender:
         self.timestamp = random.randint(0, 0xFFFFFFFF)  # Random initial timestamp
         self.ssrc = random.randint(0, 0xFFFFFFFF)  # Synchronization source identifier
 
+        # Reference point for RTCP NTP↔RTP mapping
+        # These define the bijection: at ntp_start, RTP timestamp was rtp_start
+        self.ntp_start = self.get_ntp_timestamp()
+        self.rtp_start = self.timestamp
+
         # Statistics for RTCP
         self.packet_count = 0
         self.octet_count = 0
@@ -73,6 +78,9 @@ class RTPSender:
     def create_socket(self) -> None:
         """Create and configure multicast UDP socket."""
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+
+        # Set socket to non-blocking mode to prevent event loop blocking
+        self.socket.setblocking(False)
 
         # Set socket options
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.ttl)
@@ -86,7 +94,7 @@ class RTPSender:
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         self.logger.info(
-            "Created RTP socket for %s:%d (TTL=%d, DSCP=%d)",
+            "Created RTP socket for %s:%d (TTL=%d, DSCP=%d, non-blocking)",
             self.multicast_group,
             self.rtp_port,
             self.ttl,
@@ -137,30 +145,41 @@ class RTPSender:
             self.ssrc,  # SSRC (32 bits)
         )
 
-    def send_packet(self, pcm_data: bytes) -> None:
+    def send_packet(self, pcm_data: bytes, marker: bool = False) -> None:
         """
         Send PCM audio data as RTP packet.
 
         :param pcm_data: Raw PCM audio data
+        :param marker: Marker bit for stream start/boundaries
         """
         if not self.socket:
             raise RuntimeError("Socket not created. Call create_socket() first.")
 
         # Calculate how many samples this chunk contains
         bytes_per_sample = self.channels * (self.bit_depth // 8)
+
+        # Guard against non-frame-aligned payloads
+        if len(pcm_data) % bytes_per_sample != 0:
+            self.logger.error(
+                "Non-frame-aligned RTP payload (%d bytes, expected multiple of %d)",
+                len(pcm_data),
+                bytes_per_sample,
+            )
+            return
+
         samples_in_chunk = len(pcm_data) // bytes_per_sample
 
-        # Create RTP header
-        rtp_header = self._create_rtp_header(len(pcm_data))
+        # Create RTP header with marker bit
+        rtp_header = self._create_rtp_header(len(pcm_data), marker=marker)
 
         # Construct RTP packet
         rtp_packet = rtp_header + pcm_data
 
-        # Send packet
+        # Send packet (non-blocking mode)
         try:
             self.socket.sendto(rtp_packet, (self.multicast_group, self.rtp_port))
 
-            # Update RTP state
+            # Update RTP state - timestamps remain monotonic across track changes
             self.sequence_number = (self.sequence_number + 1) & 0xFFFF
             self.timestamp = (self.timestamp + samples_in_chunk) & 0xFFFFFFFF
 
@@ -199,3 +218,47 @@ class RTPSender:
 
         # Combine into 64-bit timestamp
         return (ntp_seconds << 32) | ntp_fraction
+
+    def get_rtcp_timestamp(self, ntp_now: int) -> int:
+        """
+        Calculate RTP timestamp for RTCP SR based on NTP time.
+
+        This maintains the NTP↔RTP bijection required by RFC 3550.
+        The RTP timestamp in SR must represent the sampling instant
+        corresponding to the NTP time, not the last packet sent.
+
+        :param ntp_now: Current NTP timestamp
+        :return: RTP timestamp corresponding to ntp_now
+        """
+        # Extract fractional seconds from both NTP timestamps
+        ntp_now_seconds = (ntp_now >> 32) + ((ntp_now & 0xFFFFFFFF) / 0xFFFFFFFF)
+        ntp_start_seconds = (self.ntp_start >> 32) + ((self.ntp_start & 0xFFFFFFFF) / 0xFFFFFFFF)
+
+        # Calculate elapsed time in seconds
+        elapsed = ntp_now_seconds - ntp_start_seconds
+
+        # RTP timestamp = start timestamp + (elapsed time * sample rate)
+        rtp_timestamp = self.rtp_start + int(elapsed * self.sample_rate)
+
+        return rtp_timestamp & 0xFFFFFFFF
+
+    def get_rtcp_snapshot(self) -> tuple[int, int, int, int]:
+        """
+        Get atomic snapshot of RTP state for RTCP SR.
+
+        This ensures all fields in the SR describe the same instant,
+        preventing race conditions from async SR generation.
+
+        :return: Tuple of (ntp_timestamp, rtp_timestamp, packet_count, octet_count)
+        """
+        # Capture NTP time first
+        ntp_now = self.get_ntp_timestamp()
+
+        # Calculate correct RTP timestamp for this NTP time
+        rtp_ts = self.get_rtcp_timestamp(ntp_now)
+
+        # Snapshot counters (GIL provides atomicity for these reads)
+        pkt_count = self.packet_count
+        oct_count = self.octet_count
+
+        return (ntp_now, rtp_ts, pkt_count, oct_count)
