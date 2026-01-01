@@ -58,7 +58,6 @@ AES67_PTIME_MS_DEFAULT = 1.0
 AES67_PTIME_OPTIONS = [0.125, 0.25, 0.333, 0.5, 1.0, 2.0, 4.0]
 
 # Configuration Keys
-CONF_MULTICAST_STREAMS = "multicast_streams"
 CONF_STREAM_NAME = "stream_name"
 CONF_MULTICAST_ADDRESS = "multicast_address"
 CONF_RTP_PORT = "rtp_port"

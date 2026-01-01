@@ -17,7 +17,15 @@ from .constants import (
     AES67_DEFAULT_SAMPLE_RATE,
     AES67_MULTICAST_BASE,
     AES67_RTP_PORT_DEFAULT,
-    CONF_MULTICAST_STREAMS,
+    CONF_BIT_DEPTH,
+    CONF_CHANNELS,
+    CONF_DSCP,
+    CONF_ENABLE_SAP,
+    CONF_MULTICAST_ADDRESS,
+    CONF_RTP_PORT,
+    CONF_SAMPLE_RATE,
+    CONF_STREAM_NAME,
+    CONF_TTL,
     DSCP_DEFAULT,
     TTL_DEFAULT,
 )
@@ -59,104 +67,84 @@ async def get_config_entries(
     # ruff: noqa: ARG001
     return (
         ConfigEntry(
-            key=CONF_MULTICAST_STREAMS,
+            key=CONF_STREAM_NAME,
             type=ConfigEntryType.STRING,
-            label="AES67 Multicast Streams",
-            description=(
-                "Configure one or more AES67 multicast audio streams.\n\n"
-                "Each stream will appear as a virtual player in Music Assistant.\n"
-                "Multiple AES67/RAVENNA/Dante receivers can listen to each stream.\n\n"
-                "**Configuration Format (JSON array):**\n"
-                "```json\n"
-                "[\n"
-                "  {\n"
-                '    "stream_name": "Main Audio",\n'
-                '    "multicast_address": "239.69.83.1",\n'
-                '    "rtp_port": 5004,\n'
-                '    "sample_rate": 48000,\n'
-                '    "bit_depth": 24,\n'
-                '    "channels": 2,\n'
-                '    "ttl": 32,\n'
-                '    "dscp": 34,\n'
-                '    "enable_sap": true\n'
-                "  }\n"
-                "]\n"
-                "```\n\n"
-                "**Parameters:**\n"
-                "- `stream_name`: Human-readable name (appears in MA)\n"
-                "- `multicast_address`: IPv4 multicast (239.69.x.x recommended)\n"
-                "- `rtp_port`: RTP port (5004-5127 recommended, RTCP uses port+1)\n"
-                "- `sample_rate`: 44100, 48000, 88200, or 96000 Hz\n"
-                "- `bit_depth`: 16 or 24 bits\n"
-                "- `channels`: 2 for stereo (multichannel not yet supported)\n"
-                "- `ttl`: Multicast TTL (1=subnet, 32=site, 255=global)\n"
-                "- `dscp`: QoS marking (34=Expedited Forwarding)\n"
-                "- `enable_sap`: Enable SAP/SDP announcements for discovery\n\n"
-                "**Example Configurations:**\n\n"
-                "*Single stereo stream:*\n"
-                f'`[{{"stream_name": "Studio A", '
-                f'"multicast_address": "{AES67_MULTICAST_BASE}"}}]`\n\n'
-                "*Multiple streams:*\n"
-                "```json\n"
-                "[\n"
-                '  {"stream_name": "Zone 1", "multicast_address": "239.69.83.1"},\n'
-                '  {"stream_name": "Zone 2", "multicast_address": "239.69.83.2"}\n'
-                "]\n"
-                "```"
-            ),
-            default_value=(
-                f'[{{"stream_name": "AES67 Stream 1", '
-                f'"multicast_address": "{AES67_MULTICAST_BASE}", '
-                f'"rtp_port": {AES67_RTP_PORT_DEFAULT}, '
-                f'"sample_rate": {AES67_DEFAULT_SAMPLE_RATE}, '
-                f'"bit_depth": {AES67_DEFAULT_BIT_DEPTH}, '
-                f'"channels": 2, '
-                f'"ttl": {TTL_DEFAULT}, '
-                f'"dscp": {DSCP_DEFAULT}, '
-                f'"enable_sap": true'
-                "}]"
-            ),
+            label="Stream Name",
+            description="Name for this AES67 stream (will appear as a player in Music Assistant)",
+            default_value="AES67 Stream",
             required=True,
-            multi_value=False,
         ),
         ConfigEntry(
-            key="info_network_requirements",
-            type=ConfigEntryType.LABEL,
-            label="Network Requirements",
-            description=(
-                "**Important Network Configuration:**\n\n"
-                "AES67 requires a properly configured network:\n\n"
-                "1. **Multicast-capable switches** with IGMP snooping enabled\n"
-                "2. **PTP (IEEE 1588) clock synchronization** for sample-accurate sync\n"
-                "3. **Quality of Service (QoS)** configuration to prioritize audio traffic\n"
-                "4. **Dedicated VLAN** recommended for professional installations\n\n"
-                "**Compatible Receivers:**\n"
-                "- AES67-compliant hardware (any manufacturer)\n"
-                "- RAVENNA devices (fully AES67-compatible)\n"
-                "- Dante devices (enable AES67 mode in Dante Controller)\n"
-                "- Livewire+, Q-SYS, WHEATNet-IP, Merging+ANUBIS\n\n"
-                "**Not recommended for:**\n"
-                "- Home consumer routers (usually lack multicast support)\n"
-                "- Wireless networks (unreliable for professional audio)\n"
-                "- Networks without managed switches"
-            ),
+            key=CONF_MULTICAST_ADDRESS,
+            type=ConfigEntryType.STRING,
+            label="Multicast Address",
+            description="IPv4 multicast address (239.69.x.x recommended for AES67)",
+            default_value=AES67_MULTICAST_BASE,
+            required=True,
+        ),
+        ConfigEntry(
+            key=CONF_RTP_PORT,
+            type=ConfigEntryType.INTEGER,
+            label="RTP Port",
+            description="UDP port for RTP packets (RTCP will use port+1). Recommended: 5004-5127.",
+            default_value=AES67_RTP_PORT_DEFAULT,
+            required=False,
             category="advanced",
         ),
         ConfigEntry(
-            key="info_standards_compliance",
-            type=ConfigEntryType.LABEL,
-            label="Standards Compliance",
+            key=CONF_SAMPLE_RATE,
+            type=ConfigEntryType.INTEGER,
+            label="Sample Rate (Hz)",
+            description="Audio sample rate. AES67 standard: 48000Hz recommended.",
+            default_value=AES67_DEFAULT_SAMPLE_RATE,
+            required=False,
+            category="advanced",
+        ),
+        ConfigEntry(
+            key=CONF_BIT_DEPTH,
+            type=ConfigEntryType.INTEGER,
+            label="Bit Depth",
+            description="Audio bit depth (16 or 24 bits). 24-bit recommended for professional use.",
+            default_value=AES67_DEFAULT_BIT_DEPTH,
+            required=False,
+            category="advanced",
+        ),
+        ConfigEntry(
+            key=CONF_CHANNELS,
+            type=ConfigEntryType.INTEGER,
+            label="Channels",
+            description="Number of audio channels (2 for stereo)",
+            default_value=2,
+            required=False,
+            category="advanced",
+        ),
+        ConfigEntry(
+            key=CONF_TTL,
+            type=ConfigEntryType.INTEGER,
+            label="Multicast TTL",
+            description="Time-to-live for multicast packets (1=subnet, 32=site, 255=global)",
+            default_value=TTL_DEFAULT,
+            required=False,
+            category="advanced",
+        ),
+        ConfigEntry(
+            key=CONF_DSCP,
+            type=ConfigEntryType.INTEGER,
+            label="DSCP (QoS)",
             description=(
-                "**This provider implements:**\n\n"
-                "- **AES67-2018** - High-performance streaming audio-over-IP\n"
-                "- **RFC 3550** - RTP (Real-time Transport Protocol)\n"
-                "- **RFC 3551** - RTP Audio/Video Profile\n"
-                "- **RFC 2974** - SAP (Session Announcement Protocol)\n"
-                "- **RFC 4566** - SDP (Session Description Protocol)\n"
-                "- **IEEE 1588-2008** - PTP reference (receivers provide clock)\n\n"
-                "All implementations follow published standards with no\n"
-                "proprietary protocols or vendor lock-in."
+                "Differentiated Services Code Point for QoS (34=Expedited Forwarding recommended)"
             ),
+            default_value=DSCP_DEFAULT,
+            required=False,
+            category="advanced",
+        ),
+        ConfigEntry(
+            key=CONF_ENABLE_SAP,
+            type=ConfigEntryType.BOOLEAN,
+            label="Enable SAP/SDP Announcements",
+            description="Broadcast stream info via SAP for automatic discovery by receivers",
+            default_value=True,
+            required=False,
             category="advanced",
         ),
     )

@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from music_assistant.models.player_provider import PlayerProvider
 
 from .constants import (
-    AES67_DEFAULT_BIT_DEPTH,
-    AES67_DEFAULT_SAMPLE_RATE,
-    AES67_RTP_PORT_DEFAULT,
-    CONF_MULTICAST_STREAMS,
-    DSCP_DEFAULT,
-    TTL_DEFAULT,
+    CONF_BIT_DEPTH,
+    CONF_CHANNELS,
+    CONF_DSCP,
+    CONF_ENABLE_SAP,
+    CONF_MULTICAST_ADDRESS,
+    CONF_RTP_PORT,
+    CONF_SAMPLE_RATE,
+    CONF_STREAM_NAME,
+    CONF_TTL,
 )
 from .player import AES67Player
 
@@ -35,39 +37,21 @@ class AES67Provider(PlayerProvider):
         """Handle async initialization of the provider."""
         self.logger.info("Initializing AES67 Multicast Provider")
 
-        # Get configured multicast streams (stored as JSON string)
-        multicast_streams_str = self.config.get_value(CONF_MULTICAST_STREAMS)
+        # Build stream config from individual config entries
+        stream_config: dict[str, Any] = {
+            "stream_name": self.config.get_value(CONF_STREAM_NAME),
+            "multicast_address": self.config.get_value(CONF_MULTICAST_ADDRESS),
+            "rtp_port": self.config.get_value(CONF_RTP_PORT),
+            "sample_rate": self.config.get_value(CONF_SAMPLE_RATE),
+            "bit_depth": self.config.get_value(CONF_BIT_DEPTH),
+            "channels": self.config.get_value(CONF_CHANNELS),
+            "ttl": self.config.get_value(CONF_TTL),
+            "dscp": self.config.get_value(CONF_DSCP),
+            "enable_sap": self.config.get_value(CONF_ENABLE_SAP),
+        }
 
-        if not multicast_streams_str:
-            self.logger.warning(
-                "No multicast streams configured. Please configure at least one stream."
-            )
-            return
-
-        # Ensure it's a string
-        if not isinstance(multicast_streams_str, str):
-            self.logger.error("multicast_streams configuration must be a JSON string")
-            return
-
-        # Parse JSON configuration
-        try:
-            multicast_streams = json.loads(multicast_streams_str)
-        except json.JSONDecodeError as err:
-            self.logger.error("Invalid JSON in multicast streams configuration: %s", err)
-            return
-
-        if not isinstance(multicast_streams, list):
-            self.logger.error("multicast_streams must be a JSON array")
-            return
-
-        # Create virtual player for each configured stream
-        for item in multicast_streams:
-            # Skip non-dict items (for type safety)
-            if not isinstance(item, dict):
-                continue
-            # Type narrowed to dict here
-            stream_config: dict[str, Any] = item
-            await self._create_stream_player(stream_config)
+        # Create the AES67 player for this provider instance
+        await self._create_stream_player(stream_config)
 
     async def _create_stream_player(self, stream_config: dict[str, Any]) -> None:
         """
@@ -75,23 +59,9 @@ class AES67Provider(PlayerProvider):
 
         :param stream_config: Stream configuration dictionary
         """
-        # Set defaults for missing configuration keys
-        stream_config.setdefault("stream_name", "AES67 Stream")
-        stream_config.setdefault("rtp_port", AES67_RTP_PORT_DEFAULT)
-        stream_config.setdefault("sample_rate", AES67_DEFAULT_SAMPLE_RATE)
-        stream_config.setdefault("bit_depth", AES67_DEFAULT_BIT_DEPTH)
-        stream_config.setdefault("channels", 2)
-        stream_config.setdefault("ttl", TTL_DEFAULT)
-        stream_config.setdefault("dscp", DSCP_DEFAULT)
-        stream_config.setdefault("enable_sap", True)
-
         stream_name = stream_config["stream_name"]
-        multicast_address = stream_config.get("multicast_address")
+        multicast_address = stream_config["multicast_address"]
         rtp_port = stream_config["rtp_port"]
-
-        if not multicast_address:
-            self.logger.error("Stream '%s' missing multicast_address, skipping", stream_name)
-            return
 
         # Validate multicast address (239.x.x.x range for AES67)
         if not multicast_address.startswith("239."):
@@ -101,13 +71,8 @@ class AES67Provider(PlayerProvider):
                 multicast_address,
             )
 
-        # Create player ID from multicast address
-        player_id = f"aes67_{multicast_address.replace('.', '_')}_{rtp_port}"
-
-        # Check if player already exists
-        if self.mass.players.get(player_id):
-            self.logger.debug("Player %s already exists, skipping", player_id)
-            return
+        # Create player ID from provider instance ID and multicast address
+        player_id = f"{self.instance_id}_{multicast_address.replace('.', '_')}_{rtp_port}"
 
         # Create AES67 player
         player = AES67Player(
