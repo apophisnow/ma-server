@@ -33,6 +33,12 @@ class AES67Provider(PlayerProvider):
     SAP/SDP (RFC 2974, RFC 4566) for stream discovery.
     """
 
+    @property
+    def instance_name_postfix(self) -> str | None:
+        """Return instance name postfix based on the stream name."""
+        stream_name = self.config.get_value(CONF_STREAM_NAME)
+        return str(stream_name) if stream_name else None
+
     async def handle_async_init(self) -> None:
         """Handle async initialization of the provider."""
         self.logger.info("Initializing AES67 Multicast Provider")

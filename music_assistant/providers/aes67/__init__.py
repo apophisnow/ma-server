@@ -65,13 +65,36 @@ async def get_config_entries(
     :param values: the (intermediate) raw values for config entries sent with the action.
     """
     # ruff: noqa: ARG001
+
+    # Calculate defaults for new instances based on existing AES67 providers
+    default_name = "AES67 Stream"
+    default_address = AES67_MULTICAST_BASE
+
+    if instance_id is None:
+        # This is a new instance - calculate next available defaults
+        existing_instances = [
+            provider for provider in mass.providers if provider.manifest.domain == "aes67"
+        ]
+
+        if existing_instances:
+            instance_count = len(existing_instances) + 1
+            default_name = f"AES67 Stream {instance_count}"
+
+            # Increment the last octet of the multicast address
+            base_parts = AES67_MULTICAST_BASE.split(".")
+            last_octet = int(base_parts[3]) + len(existing_instances)
+            # Wrap around if we exceed 255
+            if last_octet > 255:
+                last_octet = last_octet % 256
+            default_address = f"{base_parts[0]}.{base_parts[1]}.{base_parts[2]}.{last_octet}"
+
     return (
         ConfigEntry(
             key=CONF_STREAM_NAME,
             type=ConfigEntryType.STRING,
             label="Stream Name",
             description="Name for this AES67 stream (will appear as a player in Music Assistant)",
-            default_value="AES67 Stream",
+            default_value=default_name,
             required=True,
         ),
         ConfigEntry(
@@ -79,7 +102,7 @@ async def get_config_entries(
             type=ConfigEntryType.STRING,
             label="Multicast Address",
             description="IPv4 multicast address (239.69.x.x recommended for AES67)",
-            default_value=AES67_MULTICAST_BASE,
+            default_value=default_address,
             required=True,
         ),
         ConfigEntry(
