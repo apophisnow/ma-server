@@ -26,7 +26,7 @@ AES67_RTCP_PORT_DEFAULT = 5005  # Always RTP port + 1
 # Multicast Address Ranges (Section 7.1)
 # AES67 uses IPv4 multicast in range 239.0.0.0/8 (organization-local scope)
 # Recommended: 239.69.0.0/16 for AES67 streams
-AES67_MULTICAST_BASE = "239.69.83.0"  # Base address for auto-assignment
+AES67_MULTICAST_BASE = "239.69.83.1"  # Base address for auto-assignment
 AES67_MULTICAST_RANGE_START = "239.69.0.1"
 AES67_MULTICAST_RANGE_END = "239.69.255.255"
 
