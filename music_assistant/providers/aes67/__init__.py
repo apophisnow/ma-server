@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from music_assistant_models.config_entries import ConfigEntry
+from music_assistant_models.config_entries import ConfigEntry, ConfigValueOption
 from music_assistant_models.enums import ConfigEntryType, ProviderFeature
 
 from .constants import (
@@ -123,6 +123,12 @@ async def get_config_entries(
             description="Audio sample rate (48000 Hz recommended)",
             default_value=AES67_DEFAULT_SAMPLE_RATE,
             required=False,
+            options=[
+                ConfigValueOption(title="44.1 kHz", value=44100),
+                ConfigValueOption(title="48 kHz (Recommended)", value=48000),
+                ConfigValueOption(title="88.2 kHz", value=88200),
+                ConfigValueOption(title="96 kHz", value=96000),
+            ],
             category="advanced",
         ),
         ConfigEntry(
@@ -132,6 +138,10 @@ async def get_config_entries(
             description="Audio bit depth - 16 or 24 bits (24-bit recommended)",
             default_value=AES67_DEFAULT_BIT_DEPTH,
             required=False,
+            options=[
+                ConfigValueOption(title="16-bit", value=16),
+                ConfigValueOption(title="24-bit (Recommended)", value=24),
+            ],
             category="advanced",
         ),
         ConfigEntry(
