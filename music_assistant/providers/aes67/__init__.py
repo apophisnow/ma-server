@@ -69,6 +69,7 @@ async def get_config_entries(
     # Calculate defaults for new instances based on existing AES67 providers
     default_name = "AES67 Stream"
     default_address = AES67_MULTICAST_BASE
+    default_port = AES67_RTP_PORT_DEFAULT
 
     if instance_id is None:
         # This is a new instance - calculate next available defaults
@@ -87,6 +88,9 @@ async def get_config_entries(
             if last_octet > 255:
                 last_octet = last_octet % 256
             default_address = f"{base_parts[0]}.{base_parts[1]}.{base_parts[2]}.{last_octet}"
+
+            # Increment RTP port by 2 for each instance (RTP uses port N, RTCP uses port N+1)
+            default_port = AES67_RTP_PORT_DEFAULT + (len(existing_instances) * 2)
 
     return (
         ConfigEntry(
@@ -110,7 +114,7 @@ async def get_config_entries(
             type=ConfigEntryType.INTEGER,
             label="RTP Port",
             description="UDP port for audio stream (recommended range: 5004-5127)",
-            default_value=AES67_RTP_PORT_DEFAULT,
+            default_value=default_port,
             required=False,
             category="advanced",
         ),
