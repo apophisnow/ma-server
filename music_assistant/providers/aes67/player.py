@@ -173,19 +173,8 @@ class AES67Player(Player):
 
         # Prepare the PCM format based on bit depth
         # AES67 requires big-endian (network byte order) as per RFC 3550
-        # AES67 only supports 16-bit and 24-bit audio
-        if self.bit_depth == 24:
-            content_type = ContentType.PCM_S24BE
-        elif self.bit_depth == 16:
-            content_type = ContentType.PCM_S16BE
-        else:
-            self.logger.error(
-                "Unsupported bit depth %d for AES67 (only 16 and 24-bit supported)",
-                self.bit_depth,
-            )
-            self._attr_playback_state = PlaybackState.IDLE
-            self.update_state()
-            return
+        # Note: Bit depth is validated at provider level to be 16 or 24
+        content_type = ContentType.PCM_S24BE if self.bit_depth == 24 else ContentType.PCM_S16BE
 
         pcm_format = AudioFormat(
             content_type=content_type,
