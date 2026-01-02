@@ -53,8 +53,8 @@ async def setup(
 async def get_config_entries(
     mass: MusicAssistant,
     instance_id: str | None = None,
-    action: str | None = None,
-    values: dict[str, ConfigValueType] | None = None,
+    action: str | None = None,  # noqa: ARG001
+    values: dict[str, ConfigValueType] | None = None,  # noqa: ARG001
 ) -> tuple[ConfigEntry, ...]:
     """
     Return Config entries to setup this provider.
@@ -64,8 +64,6 @@ async def get_config_entries(
     :param action: [optional] action key called from config entries UI.
     :param values: the (intermediate) raw values for config entries sent with the action.
     """
-    # ruff: noqa: ARG001
-
     # Calculate defaults for new instances based on existing AES67 providers
     default_name = "AES67 Stream"
     default_address = AES67_MULTICAST_BASE
