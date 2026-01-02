@@ -3,7 +3,7 @@
   "domain": "aes67",
   "stage": "alpha",
   "name": "AES67 Multicast Stream",
-  "description": "Stream audio to professional AES67/RAVENNA/Dante (AES67 mode) receivers via IP multicast using standards-compliant RTP/RTCP (RFC 3550) and SAP/SDP (RFC 2974, RFC 4566) for discovery.",
+  "description": "Stream audio to professional AES67/RAVENNA/Dante receivers and software players like VLC via IP multicast with automatic discovery.",
   "codeowners": ["@apophisnow"],
   "documentation": "https://music-assistant.io/player-support/aes67/",
   "multi_instance": true,
