@@ -226,7 +226,7 @@ class SAPAnnouncer:
 
     async def send_announcement_async(self) -> None:
         """Send SAP announcement asynchronously."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.send_announcement)
 
     async def start_periodic_announcements(self) -> None:

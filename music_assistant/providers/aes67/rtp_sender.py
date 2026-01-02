@@ -208,7 +208,7 @@ class RTPSender:
 
         :param pcm_data: Raw PCM audio data
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.send_packet, pcm_data)
 
     def get_ntp_timestamp(self) -> int:

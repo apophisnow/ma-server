@@ -168,7 +168,7 @@ class RTCPSender:
 
     async def send_sender_report_async(self) -> None:
         """Send RTCP Sender Report asynchronously."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.send_sender_report)
 
     async def start_periodic_sender_reports(self) -> None:
