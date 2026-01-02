@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from .constants import (
     DSCP_DEFAULT,
+    NTP_EPOCH_DELTA,
     RTP_VERSION,
     TTL_DEFAULT,
 )
@@ -77,29 +78,40 @@ class RTPSender:
 
     def create_socket(self) -> None:
         """Create and configure multicast UDP socket."""
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 
-        # Set socket to non-blocking mode to prevent event loop blocking
-        self.socket.setblocking(False)
+            # Set socket to non-blocking mode to prevent event loop blocking
+            sock.setblocking(False)
 
-        # Set socket options
-        self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.ttl)
+            # Set socket options
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.ttl)
 
-        # Set DSCP for QoS (Type of Service field)
-        # DSCP is the upper 6 bits of the TOS byte
-        tos_value = self.dscp << 2
-        self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, tos_value)
+            # Set DSCP for QoS (Type of Service field)
+            # DSCP is the upper 6 bits of the TOS byte
+            tos_value = self.dscp << 2
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, tos_value)
 
-        # Allow address reuse
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Allow address reuse
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        self.logger.info(
-            "Created RTP socket for %s:%d (TTL=%d, DSCP=%d, non-blocking)",
-            self.multicast_group,
-            self.rtp_port,
-            self.ttl,
-            self.dscp,
-        )
+            # All succeeded, assign to self.socket
+            self.socket = sock
+
+            self.logger.info(
+                "Created RTP socket for %s:%d (TTL=%d, DSCP=%d, non-blocking)",
+                self.multicast_group,
+                self.rtp_port,
+                self.ttl,
+                self.dscp,
+            )
+        except OSError as err:
+            # Cleanup on failure
+            if sock is not None:
+                sock.close()
+            self.logger.exception("Failed to create RTP socket: %s", err)
+            raise
 
     def close_socket(self) -> None:
         """Close the multicast socket."""
@@ -188,7 +200,7 @@ class RTPSender:
             self.octet_count += len(pcm_data)
 
         except OSError as err:
-            self.logger.error("Failed to send RTP packet: %s", err)
+            self.logger.exception("Failed to send RTP packet: %s", err)
 
     async def send_packet_async(self, pcm_data: bytes) -> None:
         """
@@ -207,13 +219,8 @@ class RTPSender:
 
         :return: NTP timestamp as 64-bit integer
         """
-        # NTP epoch starts Jan 1, 1900
-        # Unix epoch starts Jan 1, 1970
-        # Difference: 2208988800 seconds
-        ntp_epoch_delta = 2208988800
-
         current_time = time.time()
-        ntp_seconds = int(current_time) + ntp_epoch_delta
+        ntp_seconds = int(current_time) + NTP_EPOCH_DELTA
         ntp_fraction = int((current_time - int(current_time)) * 0xFFFFFFFF)
 
         # Combine into 64-bit timestamp

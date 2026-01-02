@@ -83,3 +83,8 @@ TTL_DEFAULT = 32  # Reasonable default for local network
 TTL_LINK_LOCAL = 1  # Same subnet only
 TTL_SITE_LOCAL = 32  # Organization
 TTL_GLOBAL = 255  # Internet-wide (use with caution)
+
+# NTP Epoch Constants
+# NTP epoch starts Jan 1, 1900, Unix epoch starts Jan 1, 1970
+# Difference: 2208988800 seconds (70 years)
+NTP_EPOCH_DELTA = 2208988800

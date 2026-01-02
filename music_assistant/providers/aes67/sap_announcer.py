@@ -53,24 +53,39 @@ class SAPAnnouncer:
 
         # Generate session ID (RFC 4566 Section 5.2)
         # Use hash of stream name + time for uniqueness
-        session_id = int(hashlib.md5(f"{stream_name}{time.time()}".encode()).hexdigest()[:16], 16)
+        session_id = int(
+            hashlib.sha256(f"{stream_name}{time.time()}".encode()).hexdigest()[:16], 16
+        )
         self.session_id = session_id
 
     def create_socket(self) -> None:
         """Create and configure multicast UDP socket for SAP."""
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 
-        # SAP announcements use TTL of 255 for global scope
-        self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+            # Use the same TTL as the RTP stream for SAP announcements
+            # This ensures SAP announcements propagate to the same network scope as the stream
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.rtp_sender.ttl)
 
-        # Allow address reuse
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Allow address reuse
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        self.logger.info(
-            "Created SAP socket for %s:%d",
-            SAP_MULTICAST_ADDR_IPV4,
-            SAP_PORT,
-        )
+            # All succeeded, assign to self.socket
+            self.socket = sock
+
+            self.logger.info(
+                "Created SAP socket for %s:%d (TTL=%d)",
+                SAP_MULTICAST_ADDR_IPV4,
+                SAP_PORT,
+                self.rtp_sender.ttl,
+            )
+        except OSError as err:
+            # Cleanup on failure
+            if sock is not None:
+                sock.close()
+            self.logger.exception("Failed to create SAP socket: %s", err)
+            raise
 
     def close_socket(self) -> None:
         """Close the SAP socket."""
@@ -138,7 +153,7 @@ class SAPAnnouncer:
 
         return "\r\n".join(sdp_lines) + "\r\n"
 
-    def _create_sap_packet(self) -> bytes:
+    def _create_sap_packet(self, deletion: bool = False) -> bytes:
         """
         Create SAP announcement packet (RFC 2974).
 
@@ -153,12 +168,13 @@ class SAPAnnouncer:
         :                                                               :
         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+        :param deletion: Set to True to create a deletion announcement (A=1)
         :return: SAP packet bytes
         """
         # SAP Header Byte 0:
-        # V=1 (version), A=0 (announcement, not deletion),
+        # V=1 (version), A=announcement type (0=announcement, 1=deletion),
         # R=0 (not relayed), T=0 (not encrypted), E=0 (not compressed), C=0 (no payload type)
-        version_flags = (1 << 5) | 0x00  # V=1, all flags = 0
+        version_flags = (1 << 5) | (int(deletion) << 4)  # V=1, A=deletion flag
 
         # Auth len = 0 (no authentication)
         auth_len = 0
@@ -166,7 +182,7 @@ class SAPAnnouncer:
         # Message ID Hash (16-bit)
         # Use hash of multicast address + port for uniqueness
         msg_id_str = f"{self.rtp_sender.multicast_group}:{self.rtp_sender.rtp_port}"
-        msg_id_hash = hashlib.md5(msg_id_str.encode()).digest()[:2]
+        msg_id_hash = hashlib.sha256(msg_id_str.encode()).digest()[:2]
         msg_id = struct.unpack("!H", msg_id_hash)[0]
 
         # Originating source (IPv4 address as 32-bit integer)
@@ -206,7 +222,7 @@ class SAPAnnouncer:
                 len(sap_packet),
             )
         except OSError as err:
-            self.logger.error("Failed to send SAP announcement: %s", err)
+            self.logger.exception("Failed to send SAP announcement: %s", err)
 
     async def send_announcement_async(self) -> None:
         """Send SAP announcement asynchronously."""
@@ -242,33 +258,14 @@ class SAPAnnouncer:
         if not self.socket:
             return
 
-        # Similar to regular announcement but with A=1
-        version_flags = (1 << 5) | (1 << 4)  # V=1, A=1 (deletion)
-        auth_len = 0
-
-        msg_id_str = f"{self.rtp_sender.multicast_group}:{self.rtp_sender.rtp_port}"
-        msg_id_hash = hashlib.md5(msg_id_str.encode()).digest()[:2]
-        msg_id = struct.unpack("!H", msg_id_hash)[0]
-
-        orig_source = struct.unpack("!I", socket.inet_aton(self.originator_address))[0]
-
-        sap_header = struct.pack(
-            "!BBH I",
-            version_flags,
-            auth_len,
-            msg_id,
-            orig_source,
-        )
-
-        payload_type = b"application/sdp\x00"
-        sdp_content = self._generate_sdp().encode("utf-8")
-        sap_packet = sap_header + payload_type + sdp_content
+        # Create deletion announcement using the shared packet creation method
+        sap_packet = self._create_sap_packet(deletion=True)
 
         try:
             self.socket.sendto(sap_packet, (SAP_MULTICAST_ADDR_IPV4, SAP_PORT))
             self.logger.debug("Sent SAP deletion announcement for %s", self.stream_name)
         except OSError as err:
-            self.logger.error("Failed to send SAP deletion: %s", err)
+            self.logger.exception("Failed to send SAP deletion: %s", err)
 
     async def _announce_loop(self) -> None:
         """Periodically send SAP announcements."""

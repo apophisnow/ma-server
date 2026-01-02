@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import TYPE_CHECKING, Any
 
 from music_assistant.models.player_provider import PlayerProvider
 
 from .constants import (
+    AES67_BIT_DEPTHS,
+    AES67_SAMPLE_RATES,
     CONF_BIT_DEPTH,
     CONF_CHANNELS,
     CONF_DSCP,
@@ -68,13 +71,50 @@ class AES67Provider(PlayerProvider):
         stream_name = stream_config["stream_name"]
         multicast_address = stream_config["multicast_address"]
         rtp_port = stream_config["rtp_port"]
+        sample_rate = stream_config["sample_rate"]
+        bit_depth = stream_config["bit_depth"]
 
-        # Validate multicast address (239.x.x.x range for AES67)
-        if not multicast_address.startswith("239."):
+        # Validate sample rate
+        if sample_rate not in AES67_SAMPLE_RATES:
             self.logger.warning(
-                "Stream '%s' multicast address '%s' is not in AES67 recommended range (239.x.x.x)",
+                "Stream '%s' sample rate %d Hz is not AES67 standard (recommended: %s)",
+                stream_name,
+                sample_rate,
+                AES67_SAMPLE_RATES,
+            )
+
+        # Validate bit depth
+        if bit_depth not in AES67_BIT_DEPTHS:
+            self.logger.error(
+                "Stream '%s' bit depth %d is not supported by AES67 (supported: %s)",
+                stream_name,
+                bit_depth,
+                AES67_BIT_DEPTHS,
+            )
+            return
+
+        # Validate multicast address
+        try:
+            addr = ipaddress.IPv4Address(multicast_address)
+            if not addr.is_multicast:
+                self.logger.warning(
+                    "Stream '%s' address '%s' is not a valid multicast address",
+                    stream_name,
+                    multicast_address,
+                )
+            elif not multicast_address.startswith("239."):
+                self.logger.warning(
+                    "Stream '%s' multicast address '%s' is not in AES67 recommended range "
+                    "(239.x.x.x)",
+                    stream_name,
+                    multicast_address,
+                )
+        except ValueError as err:
+            self.logger.exception(
+                "Stream '%s' has invalid IP address format '%s': %s",
                 stream_name,
                 multicast_address,
+                err,
             )
 
         # Create player ID from provider instance ID and multicast address

@@ -70,6 +70,7 @@ class AES67Player(Player):
         self._set_initial_state()
 
     def _set_initial_state(self) -> None:
+        """Set initial player state attributes."""
         self._attr_powered = True
         self._attr_volume_level = 100
         self._attr_volume_muted = False
@@ -89,25 +90,33 @@ class AES67Player(Player):
 
     async def stop(self) -> None:
         """Handle STOP command."""
-        self._streaming = False
         if self._stream_task and not self._stream_task.done():
             self._stream_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._stream_task
-            self._stream_task = None
+        self._streaming = False
+        self._stream_task = None
 
+        # Clean up RTCP sender
         if self.rtcp_sender:
-            await self.rtcp_sender.stop_periodic_sender_reports()
-            self.rtcp_sender.close_socket()
+            with suppress(Exception):
+                await self.rtcp_sender.stop_periodic_sender_reports()
+            with suppress(Exception):
+                self.rtcp_sender.close_socket()
             self.rtcp_sender = None
 
+        # Clean up SAP announcer
         if self.sap_announcer:
-            await self.sap_announcer.stop_periodic_announcements()
-            self.sap_announcer.close_socket()
+            with suppress(Exception):
+                await self.sap_announcer.stop_periodic_announcements()
+            with suppress(Exception):
+                self.sap_announcer.close_socket()
             self.sap_announcer = None
 
+        # Clean up RTP sender
         if self.rtp_sender:
-            self.rtp_sender.close_socket()
+            with suppress(Exception):
+                self.rtp_sender.close_socket()
             self.rtp_sender = None
 
         self._attr_playback_state = PlaybackState.IDLE
@@ -124,11 +133,11 @@ class AES67Player(Player):
         self.update_state()
 
         if self._stream_task and not self._stream_task.done():
-            self._streaming = False
             self._stream_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._stream_task
-            self._stream_task = None
+        self._streaming = False
+        self._stream_task = None
 
         # Setup RTP/RTCP/SAP if not already
         payload_type = RTP_PAYLOAD_TYPE_L24 if self.bit_depth == 24 else RTP_PAYLOAD_TYPE_L16
@@ -164,12 +173,19 @@ class AES67Player(Player):
 
         # Prepare the PCM format based on bit depth
         # AES67 requires big-endian (network byte order) as per RFC 3550
+        # AES67 only supports 16-bit and 24-bit audio
         if self.bit_depth == 24:
             content_type = ContentType.PCM_S24BE
         elif self.bit_depth == 16:
             content_type = ContentType.PCM_S16BE
         else:
-            content_type = ContentType.PCM_S32BE
+            self.logger.error(
+                "Unsupported bit depth %d for AES67 (only 16 and 24-bit supported)",
+                self.bit_depth,
+            )
+            self._attr_playback_state = PlaybackState.IDLE
+            self.update_state()
+            return
 
         pcm_format = AudioFormat(
             content_type=content_type,
@@ -213,7 +229,7 @@ class AES67Player(Player):
                     if not self._streaming:
                         break
                     if self.rtp_sender:
-                        self.rtp_sender.send_packet(chunk)
+                        await self.rtp_sender.send_packet_async(chunk)
 
             self.logger.info(
                 "Finished streaming AES67 audio to %s:%d", self.multicast_address, self.rtp_port
@@ -223,6 +239,9 @@ class AES67Player(Player):
             self.logger.debug("AES67 streaming cancelled for %s", self.display_name)
         except Exception as err:
             self.logger.exception("Error streaming AES67 audio: %s", err)
+            # Set playback state to IDLE on error
+            self._attr_playback_state = PlaybackState.IDLE
+            self.update_state()
         finally:
             # Stop everything cleanly
             if self._streaming:

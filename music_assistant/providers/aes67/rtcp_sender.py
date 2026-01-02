@@ -41,25 +41,36 @@ class RTCPSender:
         # RTCP port is always RTP port + 1 (RFC 3550 Section 11)
         rtcp_port = self.rtp_sender.rtp_port + 1
 
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 
-        # Set socket to non-blocking mode to prevent event loop blocking
-        self.socket.setblocking(False)
+            # Set socket to non-blocking mode to prevent event loop blocking
+            sock.setblocking(False)
 
-        # Use same TTL and DSCP as RTP
-        self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.rtp_sender.ttl)
+            # Use same TTL and DSCP as RTP
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.rtp_sender.ttl)
 
-        tos_value = self.rtp_sender.dscp << 2
-        self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, tos_value)
+            tos_value = self.rtp_sender.dscp << 2
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, tos_value)
 
-        # Allow address reuse
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Allow address reuse
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        self.logger.info(
-            "Created RTCP socket for %s:%d (non-blocking)",
-            self.rtp_sender.multicast_group,
-            rtcp_port,
-        )
+            # All succeeded, assign to self.socket
+            self.socket = sock
+
+            self.logger.info(
+                "Created RTCP socket for %s:%d (non-blocking)",
+                self.rtp_sender.multicast_group,
+                rtcp_port,
+            )
+        except OSError as err:
+            # Cleanup on failure
+            if sock is not None:
+                sock.close()
+            self.logger.exception("Failed to create RTCP socket: %s", err)
+            raise
 
     def close_socket(self) -> None:
         """Close the RTCP socket."""
@@ -153,7 +164,7 @@ class RTCPSender:
                 oct_count,
             )
         except OSError as err:
-            self.logger.error("Failed to send RTCP SR: %s", err)
+            self.logger.exception("Failed to send RTCP SR: %s", err)
 
     async def send_sender_report_async(self) -> None:
         """Send RTCP Sender Report asynchronously."""
