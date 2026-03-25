@@ -405,8 +405,11 @@ class LocalFileSystemProvider(MusicProvider):
 
             async def _process(item: FileSystemItem, prev_checksum: str | None) -> None:
                 nonlocal processed_count
-                if await self._process_item_async(item, prev_checksum):
-                    cur_filenames.add(item.relative_path)
+                await self._process_item_async(item, prev_checksum)
+                # Always mark the file as present to prevent false deletions.
+                # If processing failed (e.g. transient I/O error on network mounts),
+                # the file still exists on disk and will be retried on the next sync.
+                cur_filenames.add(item.relative_path)
                 processed_count += 1
                 if processed_count % 50 == 0 or processed_count == total_items:
                     update_current_task_progress_from_index(
